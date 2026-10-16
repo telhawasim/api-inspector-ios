@@ -11,29 +11,37 @@ import APIInspectorCore
 @main
 struct APIInspectorDemoApp: App {
 
-    private let recorder: NetworkRecorder
+    private let recorder: NetworkRecorder?
 
     // MARK: - INITIALIZER -
     init() {
-        let configuration = try! InspectorConfiguration(
+        guard let capture = try? CaptureConfiguration(
+            capturesHeaders: true,
+            capturesBodies: true,
+            maximumBodySize: 256_000
+        ),
+        let retention = try? RetentionConfiguration(maximumRecords: 100),
+        let configuration = try? InspectorConfiguration(
             recordingEnabled: true,
             environment: .debug,
-            capture: CaptureConfiguration(
-                capturesHeaders: true,
-                capturesBodies: true,
-                maximumBodySize: 256_000,
-            ),
-            retention: RetentionConfiguration(
-                maximumRecords: 100
-            )
-        )
+            capture: capture,
+            retention: retention
+        ) else {
+            recorder = nil
+            return
+        }
 
-        recorder = try! NetworkRecorder(configuration: configuration)
+        recorder = try? NetworkRecorder(configuration: configuration)
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView(recorder: recorder)
+            if let recorder {
+                ContentView(recorder: recorder)
+            } else {
+                Text("Unable to create the APIInspector recorder.")
+                    .padding()
+            }
         }
     }
 }

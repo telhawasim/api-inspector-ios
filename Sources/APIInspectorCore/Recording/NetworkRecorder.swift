@@ -45,6 +45,8 @@ public actor NetworkRecorder {
     private let timestamps: TimestampProvider
     private let eventHub = InspectorEventHub()
     private var tracker = RequestTracker()
+    private var finalizationsInProgress = 0
+    private var finalizationWaiters: [CheckedContinuation<Void, Never>] = []
 
     // MARK: - INITIALIZER -
     public init(
@@ -244,6 +246,7 @@ public actor NetworkRecorder {
     public func clear(
         includingActiveRequests: Bool = false
     ) async throws {
+        await waitForFinalizations()
         try await repository.clear()
 
         let removedActiveCount = includingActiveRequests
@@ -279,6 +282,7 @@ public actor NetworkRecorder {
         endedAt: Date?
     ) async throws -> NetworkRecord {
         let active = try tracker.reserveForFinalization(id)
+        finalizationsInProgress += 1
 
         let sanitizer = PrivacySanitizer(
             capture: active.capture,
@@ -331,6 +335,7 @@ public actor NetworkRecorder {
             )
         } catch {
             tracker.rollbackFinalization(id)
+            finishFinalization()
             throw error
         }
 
@@ -345,15 +350,41 @@ public actor NetworkRecorder {
             // throwing. The request is returned to the tracking state so
             // its finalization can be retried.
             tracker.rollbackFinalization(id)
+            finishFinalization()
             throw error
         }
 
         tracker.commitFinalization(id)
+        finishFinalization()
 
         await eventHub.publish(
             .recordStored(record)
         )
 
         return record
+    }
+
+    private func waitForFinalizations() async {
+        while finalizationsInProgress > 0 {
+            await withCheckedContinuation { continuation in
+                finalizationWaiters.append(continuation)
+            }
+        }
+    }
+
+    private func finishFinalization() {
+        precondition(finalizationsInProgress > 0)
+        finalizationsInProgress -= 1
+
+        guard finalizationsInProgress == 0 else {
+            return
+        }
+
+        let waiters = finalizationWaiters
+        finalizationWaiters.removeAll(keepingCapacity: true)
+
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }

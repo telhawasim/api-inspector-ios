@@ -238,4 +238,39 @@ struct PrivacySanitizerTests {
             payload?.content == .omitted(.captureDisabled)
         )
     }
+
+    @Test
+    func allMatchingPathRulesAreComposed() throws {
+        let privacy = try PrivacyConfiguration(
+            pathRules: [
+                URLPathRedactionRule(
+                    host: "example.com",
+                    pathPrefix: "/users",
+                    componentIndices: [1]
+                ),
+                URLPathRedactionRule(
+                    host: "example.com",
+                    pathPrefix: "/users",
+                    componentIndices: [3]
+                )
+            ]
+        )
+        let sanitizer = PrivacySanitizer(
+            capture: try CaptureConfiguration(capturesBodies: true),
+            privacy: privacy
+        )
+
+        let result = sanitizer.sanitize(
+            url: TestFixtures.url(
+                "https://example.com/users/123/orders/secret-order"
+            )
+        )
+
+        #expect(
+            result.url.path
+                == "/users/[REDACTED]/orders/[REDACTED]"
+        )
+        #expect(result.url.absoluteString.contains("123") == false)
+        #expect(result.url.absoluteString.contains("secret-order") == false)
+    }
 }

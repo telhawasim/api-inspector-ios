@@ -1,12 +1,21 @@
 
 # APIInspectorDemo
 
-1. Open Xcode 16 or later.
-2. Create an iOS 17 SwiftUI application named `APIInspectorDemo`.
-3. Add the APIInspector repository as a local package dependency.
-4. Link `APIInspectorCore`.
-5. Replace the generated application and content-view sources with
-   the files in this directory.
+1. Open `APIInspectorDemo.xcodeproj` in Xcode 16 or later.
+2. Select an iOS 17 or newer simulator.
+3. Run the `APIInspectorDemo` scheme.
 
-The demo manually records one transaction. Automatic URLSession
+The project links the repository through a local Swift package reference. The
+demo manually records one sanitized transaction; automatic `URLSession`
 capture belongs to Phase 2.
+
+For command-line verification:
+
+```sh
+xcodebuild \
+  -project Examples/APIInspectorDemo/APIInspectorDemo.xcodeproj \
+  -scheme APIInspectorDemo \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```

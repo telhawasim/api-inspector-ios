@@ -1,5 +1,5 @@
 //
-//  RecodingInput.swift
+//  RecordingInput.swift
 //  APIInspector
 //
 //  Created by Telha Wasim on 16/10/2026.

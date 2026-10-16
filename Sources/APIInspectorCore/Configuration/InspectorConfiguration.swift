@@ -28,6 +28,7 @@ public struct EndpointExclusion: Hashable, Codable, Sendable {
 
     public enum ValidationError: Error, Sendable {
         case emptyPathPrefix
+        case emptyHost
     }
 
     // MARK: - PROPERTIES -
@@ -44,9 +45,33 @@ public struct EndpointExclusion: Hashable, Codable, Sendable {
             throw ValidationError.emptyPathPrefix
         }
 
+        let normalizedHost = host?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if host != nil, normalizedHost?.isEmpty != false {
+            throw ValidationError.emptyHost
+        }
+
         self.method = method
-        self.host = host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self.host = normalizedHost
         self.pathPrefix = pathPrefix
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case method
+        case host
+        case pathPrefix
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        try self.init(
+            method: container.decodeIfPresent(HTTPMethod.self, forKey: .method),
+            host: container.decodeIfPresent(String.self, forKey: .host),
+            pathPrefix: container.decode(String.self, forKey: .pathPrefix)
+        )
     }
 
     public func matches(url: URL, method candidateMethod: HTTPMethod) -> Bool {
@@ -127,6 +152,29 @@ public struct CaptureConfiguration: Hashable, Codable, Sendable {
         )
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case capturesHeaders
+        case capturesBodies
+        case maximumBodySize
+        case ignoredHosts
+        case ignoredEndpoints
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        try self.init(
+            capturesHeaders: container.decode(Bool.self, forKey: .capturesHeaders),
+            capturesBodies: container.decode(Bool.self, forKey: .capturesBodies),
+            maximumBodySize: container.decode(Int.self, forKey: .maximumBodySize),
+            ignoredHosts: container.decode([String].self, forKey: .ignoredHosts),
+            ignoredEndpoints: container.decode(
+                [EndpointExclusion].self,
+                forKey: .ignoredEndpoints
+            )
+        )
+    }
+
     private init(
         uncheckedCapturesHeaders: Bool,
         capturesBodies: Bool,
@@ -159,6 +207,8 @@ public struct URLPathRedactionRule: Hashable, Codable, Sendable {
 
     public enum ValidationError: Error, Sendable {
         case emptyPathPrefix
+        case emptyHost
+        case emptyComponentIndices
         case invalidComponentIndex
     }
 
@@ -180,9 +230,37 @@ public struct URLPathRedactionRule: Hashable, Codable, Sendable {
             throw ValidationError.invalidComponentIndex
         }
 
-        self.host = host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !componentIndices.isEmpty else {
+            throw ValidationError.emptyComponentIndices
+        }
+
+        let normalizedHost = host?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if host != nil, normalizedHost?.isEmpty != false {
+            throw ValidationError.emptyHost
+        }
+
+        self.host = normalizedHost
         self.pathPrefix = pathPrefix
         self.componentIndices = componentIndices
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case host
+        case pathPrefix
+        case componentIndices
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        try self.init(
+            host: container.decodeIfPresent(String.self, forKey: .host),
+            pathPrefix: container.decode(String.self, forKey: .pathPrefix),
+            componentIndices: container.decode(Set<Int>.self, forKey: .componentIndices)
+        )
     }
 
     public func matches(_ url: URL) -> Bool {
@@ -299,6 +377,34 @@ public struct PrivacyConfiguration: Hashable, Codable, Sendable {
         )
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case sensitiveHeaders
+        case sensitiveJSONKeys
+        case sensitiveQueryParameters
+        case sensitiveFormFields
+        case pathRules
+        case replacement
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        try self.init(
+            sensitiveHeaders: container.decode([String].self, forKey: .sensitiveHeaders),
+            sensitiveJSONKeys: container.decode([String].self, forKey: .sensitiveJSONKeys),
+            sensitiveQueryParameters: container.decode(
+                [String].self,
+                forKey: .sensitiveQueryParameters
+            ),
+            sensitiveFormFields: container.decode(
+                [String].self,
+                forKey: .sensitiveFormFields
+            ),
+            pathRules: container.decode([URLPathRedactionRule].self, forKey: .pathRules),
+            replacement: container.decode(String.self, forKey: .replacement)
+        )
+    }
+
     private init(
         uncheckedSensitiveHeaders: [String],
         sensitiveJSONKeys: [String],
@@ -355,6 +461,23 @@ public struct RetentionConfiguration: Hashable, Codable, Sendable {
         }
 
         self.init(uncheckedMaximumRecords: maximumRecords, retentionPeriod: retentionPeriod)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case maximumRecords
+        case retentionPeriod
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        try self.init(
+            maximumRecords: container.decode(Int.self, forKey: .maximumRecords),
+            retentionPeriod: container.decodeIfPresent(
+                TimeInterval.self,
+                forKey: .retentionPeriod
+            )
+        )
     }
 
     private init(uncheckedMaximumRecords: Int, retentionPeriod: TimeInterval?) {
@@ -439,6 +562,35 @@ public struct InspectorConfiguration: Hashable, Codable, Sendable {
             retention: retention,
             storage: storage,
             debugOverlayEnabled: debugOverlayEnabled
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingEnabled
+        case environment
+        case allowsRecordingInRelease
+        case capture
+        case privacy
+        case retention
+        case storage
+        case debugOverlayEnabled
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        try self.init(
+            recordingEnabled: container.decode(Bool.self, forKey: .recordingEnabled),
+            environment: container.decode(InspectorEnvironment.self, forKey: .environment),
+            allowsRecordingInRelease: container.decode(
+                Bool.self,
+                forKey: .allowsRecordingInRelease
+            ),
+            capture: container.decode(CaptureConfiguration.self, forKey: .capture),
+            privacy: container.decode(PrivacyConfiguration.self, forKey: .privacy),
+            retention: container.decode(RetentionConfiguration.self, forKey: .retention),
+            storage: container.decode(StorageConfiguration.self, forKey: .storage),
+            debugOverlayEnabled: container.decode(Bool.self, forKey: .debugOverlayEnabled)
         )
     }
 

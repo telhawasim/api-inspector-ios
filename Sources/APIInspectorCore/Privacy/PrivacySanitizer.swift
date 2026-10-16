@@ -106,8 +106,14 @@ public struct PrivacySanitizer: Sendable {
 
         components.queryItems = sanitizedItems.isEmpty ? nil : sanitizedItems
 
-        if let rule = privacy.pathRules.first(where: { $0.matches(url) }) {
-            redactPath(in: &components, indices: rule.componentIndices)
+        let redactedPathIndices = privacy.pathRules
+            .filter { $0.matches(url) }
+            .reduce(into: Set<Int>()) { result, rule in
+                result.formUnion(rule.componentIndices)
+            }
+
+        if !redactedPathIndices.isEmpty {
+            redactPath(in: &components, indices: redactedPathIndices)
         }
 
         let sanitizedURL = components.url ?? Self.fallbackURL

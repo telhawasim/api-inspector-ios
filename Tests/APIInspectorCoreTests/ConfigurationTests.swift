@@ -5,6 +5,7 @@
 //  Created by Telha Wasim on 16/10/2026.
 //
 
+import Foundation
 import Testing
 @testable import APIInspectorCore
 
@@ -85,5 +86,61 @@ struct ConfigurationTests {
 
         #expect(capture.permits(url: url, method: .get))
         #expect(capture.permits(url: url, method: .post) == false)
+    }
+
+    @Test
+    func decodingCannotBypassReleaseRecordingValidation() throws {
+        let valid = try InspectorConfiguration(
+            recordingEnabled: false,
+            environment: .release,
+            allowsRecordingInRelease: false
+        )
+        let encoded = try JSONEncoder().encode(valid)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object["recordingEnabled"] = true
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        #expect(throws: InspectorConfiguration.ValidationError.self) {
+            try JSONDecoder().decode(
+                InspectorConfiguration.self,
+                from: tampered
+            )
+        }
+    }
+
+    @Test
+    func decodingCannotBypassRetentionValidation() throws {
+        let encoded = try JSONEncoder().encode(RetentionConfiguration.default)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object["maximumRecords"] = -1
+        let tampered = try JSONSerialization.data(withJSONObject: object)
+
+        #expect(throws: RetentionConfiguration.ValidationError.self) {
+            try JSONDecoder().decode(
+                RetentionConfiguration.self,
+                from: tampered
+            )
+        }
+    }
+
+    @Test
+    func validatedConfigurationRoundTripsThroughCodable() throws {
+        let original = try TestFixtures.configuration(
+            maximumRecords: 25,
+            capturesBodies: true,
+            maximumBodySize: 4_096
+        )
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(
+            InspectorConfiguration.self,
+            from: data
+        )
+
+        #expect(decoded == original)
     }
 }

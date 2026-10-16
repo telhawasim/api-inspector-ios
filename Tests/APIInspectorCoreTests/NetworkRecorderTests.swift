@@ -359,4 +359,178 @@ struct NetworkRecorderTests {
         #expect(combined.contains("body-secret") == false)
         #expect(combined.contains("person@example.com") == false)
     }
+
+    @Test
+    func transportFailureProducesFailedRecord() async throws {
+        let recorder = try NetworkRecorder(
+            configuration: TestFixtures.configuration()
+        )
+        let id = try #require(
+            try await recorder.begin(TestFixtures.request())
+        )
+
+        let record = try await recorder.fail(
+            id,
+            error: NetworkErrorInput(
+                domain: "NSURLErrorDomain",
+                code: -1_001
+            )
+        )
+
+        #expect(record.state == .failed)
+        #expect(record.response == nil)
+        #expect(record.error?.kind == .transport)
+        #expect(record.error?.code == -1_001)
+    }
+
+    @Test
+    func recordsCompletedTransactionInput() async throws {
+        let recorder = try NetworkRecorder(
+            configuration: TestFixtures.configuration()
+        )
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let endedAt = Date(timeIntervalSince1970: 101)
+
+        let record = try #require(
+            try await recorder.record(
+                NetworkTransactionInput(
+                    request: TestFixtures.request(),
+                    outcome: .response(TestFixtures.response),
+                    startedAt: startedAt,
+                    endedAt: endedAt
+                )
+            )
+        )
+
+        #expect(record.timing.startedAt == startedAt)
+        #expect(record.timing.endedAt == endedAt)
+        #expect(record.timing.duration == 1)
+    }
+
+    @Test
+    func excludedHostNeverEntersTrackingOrEvents() async throws {
+        let configuration = try InspectorConfiguration(
+            recordingEnabled: true,
+            environment: .testing,
+            capture: CaptureConfiguration(
+                ignoredHosts: ["api.example.com"]
+            )
+        )
+        let recorder = try NetworkRecorder(configuration: configuration)
+        let id = try await recorder.begin(TestFixtures.request())
+
+        #expect(id == nil)
+        #expect(await recorder.activeRequestCount() == 0)
+        #expect(try await recorder.records().isEmpty)
+    }
+
+    @Test
+    func eventBufferCapacityMustBePositive() async throws {
+        let recorder = try NetworkRecorder(
+            configuration: TestFixtures.configuration()
+        )
+
+        await #expect(throws: EventSubscriptionError.self) {
+            try await recorder.events(bufferingNewest: 0)
+        }
+    }
+
+    @Test
+    func simultaneousTerminalCallbacksStoreExactlyOneRecord() async throws {
+        let recorder = try NetworkRecorder(
+            configuration: TestFixtures.configuration()
+        )
+        let id = try #require(
+            try await recorder.begin(TestFixtures.request())
+        )
+
+        let successCount = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                (try? await recorder.complete(
+                    id,
+                    response: TestFixtures.response
+                )) != nil
+            }
+            group.addTask {
+                (try? await recorder.fail(
+                    id,
+                    error: NetworkErrorInput(domain: "Test", code: 1)
+                )) != nil
+            }
+            group.addTask {
+                (try? await recorder.cancel(id)) != nil
+            }
+
+            var successes = 0
+            for await didSucceed in group where didSucceed {
+                successes += 1
+            }
+            return successes
+        }
+
+        #expect(successCount == 1)
+        #expect(try await recorder.records().count == 1)
+        #expect(await recorder.activeRequestCount() == 0)
+    }
+
+    @Test
+    func retentionPeriodRemovesExpiredRecords() async throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let configuration = try InspectorConfiguration(
+            recordingEnabled: true,
+            environment: .testing,
+            retention: RetentionConfiguration(
+                maximumRecords: 10,
+                retentionPeriod: 60
+            )
+        )
+        let recorder = try NetworkRecorder(
+            configuration: configuration,
+            timestamps: TimestampProvider { now }
+        )
+        let id = try #require(
+            try await recorder.begin(
+                TestFixtures.request(),
+                startedAt: now.addingTimeInterval(-121)
+            )
+        )
+        _ = try await recorder.complete(
+            id,
+            response: TestFixtures.response,
+            endedAt: now.addingTimeInterval(-120)
+        )
+
+        #expect(try await recorder.records().isEmpty)
+    }
+
+    @Test
+    func clearWaitsForInProgressFinalization() async throws {
+        let repository = BlockingRecordRepository()
+        let recorder = try NetworkRecorder(
+            configuration: TestFixtures.configuration(),
+            repository: repository
+        )
+        let id = try #require(
+            try await recorder.begin(TestFixtures.request())
+        )
+
+        let completion = Task {
+            try await recorder.complete(
+                id,
+                response: TestFixtures.response
+            )
+        }
+        await repository.waitUntilInsertStarts()
+
+        let clearing = Task {
+            try await recorder.clear()
+        }
+        await Task.yield()
+        await repository.releaseInsert()
+
+        _ = try await completion.value
+        try await clearing.value
+
+        #expect(try await recorder.records().isEmpty)
+    }
 }
